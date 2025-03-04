@@ -351,16 +351,337 @@ add_library(${LIBNAME} OBJECT
     $<TARGET_OBJECTS:utility>
     $<TARGET_OBJECTS:vector>)
 
-# Generate the combined LLVM IR file for the library
+# Create a helper script for compiling source files to LLVM IR
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh "#!/bin/bash
+# Usage: compile_to_ll.sh <source_dir> <output_dir> <include_dirs> <module_name>
+SOURCE_DIR=\"\$1\"
+OUTPUT_DIR=\"\$2\"
+INCLUDE_DIRS=\"\$3\"
+MODULE_NAME=\"\$4\"
+
+mkdir -p \"\$OUTPUT_DIR\"
+
+# Add necessary preprocessor definitions for liquid-dsp
+CFLAGS=\"-std=c99 -fPIC -O3 -Wno-deprecated -Wno-deprecated-declarations -fno-vectorize -fno-slp-vectorize -ffp-contract=off\"
+DEFINES=\"-DLIQUID_FFTOVERRIDE=0 -D_GNU_SOURCE -D_XOPEN_SOURCE=600\"
+# Add module-specific definitions
+MODULE_DEFINE=\"-DLIQUID_\${MODULE_NAME^^}_MODULE\"
+
+for file in \"\$SOURCE_DIR\"/*.c; do
+    if [ -f \"\$file\" ]; then
+        # Skip .proto.c files as they are templates and not meant to be compiled directly
+        # Also skip architecture-specific files (avx.c, avx512f.c, neon.c, sse.c, av.c, etc.)
+        if [[ \"\$file\" != *\".proto.c\" && 
+              \"\$file\" != *\".avx.c\" && 
+              \"\$file\" != *\".avx512f.c\" && 
+              \"\$file\" != *\".neon.c\" && 
+              \"\$file\" != *\".sse.c\" && 
+              \"\$file\" != *\".av.c\" ]]; then
+            base=\$(basename \"\$file\" .c)
+            clang-18 -S -emit-llvm \$CFLAGS \$DEFINES \$MODULE_DEFINE \$INCLUDE_DIRS -c \"\$file\" -o \"\$OUTPUT_DIR/\$base.ll\"
+        fi
+    fi
+done
+")
+
+# Make the script executable
+execute_process(COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh)
+
+# Generate LLVM IR files for each module
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll
-    COMMAND clang-18 -S -emit-llvm -I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include 
-            -c ${CMAKE_CURRENT_SOURCE_DIR}/src/libliquid.c 
-            -o ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll
-    DEPENDS src/libliquid.c ${LIBNAME}
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/agc.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/agc/src
+            ${CMAKE_CURRENT_BINARY_DIR}/agc_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "agc"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/agc_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/agc.ll
+    DEPENDS agc ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
 )
 
-add_custom_target(${LIBNAME}_llvm ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll)
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/audio.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/src
+            ${CMAKE_CURRENT_BINARY_DIR}/audio_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "audio"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/audio_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/audio.ll
+    DEPENDS audio ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/buffer.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/buffer/src
+            ${CMAKE_CURRENT_BINARY_DIR}/buffer_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "buffer"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/buffer_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/buffer.ll
+    DEPENDS buffer ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/channel.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/channel/src
+            ${CMAKE_CURRENT_BINARY_DIR}/channel_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "channel"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/channel_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/channel.ll
+    DEPENDS channel ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dotprod.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/dotprod/src
+            ${CMAKE_CURRENT_BINARY_DIR}/dotprod_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "dotprod"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/dotprod_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/dotprod.ll
+    DEPENDS dotprod ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/equalization.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/equalization/src
+            ${CMAKE_CURRENT_BINARY_DIR}/equalization_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "equalization"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/equalization_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/equalization.ll
+    DEPENDS equalization ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+# For the remaining modules, we'll use the helper script
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fec.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/fec/src
+            ${CMAKE_CURRENT_BINARY_DIR}/fec_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "fec"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/fec_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/fec.ll
+    DEPENDS fec ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fft.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/fft/src
+            ${CMAKE_CURRENT_BINARY_DIR}/fft_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "fft"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/fft_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/fft.ll
+    DEPENDS fft ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/filter.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/filter/src
+            ${CMAKE_CURRENT_BINARY_DIR}/filter_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "filter"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/filter_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/filter.ll
+    DEPENDS filter ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/framing.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/framing/src
+            ${CMAKE_CURRENT_BINARY_DIR}/framing_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "framing"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/framing_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/framing.ll
+    DEPENDS framing ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/math.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/math/src
+            ${CMAKE_CURRENT_BINARY_DIR}/math_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "math"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/math_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/math.ll
+    DEPENDS math ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/matrix.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/matrix/src
+            ${CMAKE_CURRENT_BINARY_DIR}/matrix_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "matrix"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/matrix_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/matrix.ll
+    DEPENDS matrix ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/modem.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/modem/src
+            ${CMAKE_CURRENT_BINARY_DIR}/modem_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "modem"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/modem_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/modem.ll
+    DEPENDS modem ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/multichannel.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/multichannel/src
+            ${CMAKE_CURRENT_BINARY_DIR}/multichannel_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "multichannel"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/multichannel_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/multichannel.ll
+    DEPENDS multichannel ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/nco.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/nco/src
+            ${CMAKE_CURRENT_BINARY_DIR}/nco_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "nco"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/nco_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/nco.ll
+    DEPENDS nco ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/optim.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/optim/src
+            ${CMAKE_CURRENT_BINARY_DIR}/optim_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "optim"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/optim_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/optim.ll
+    DEPENDS optim ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/quantization.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/quantization/src
+            ${CMAKE_CURRENT_BINARY_DIR}/quantization_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "quantization"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/quantization_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/quantization.ll
+    DEPENDS quantization ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/random.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/random/src
+            ${CMAKE_CURRENT_BINARY_DIR}/random_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "random"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/random_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/random.ll
+    DEPENDS random ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sequence.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/sequence/src
+            ${CMAKE_CURRENT_BINARY_DIR}/sequence_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "sequence"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/sequence_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/sequence.ll
+    DEPENDS sequence ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/utility.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/utility/src
+            ${CMAKE_CURRENT_BINARY_DIR}/utility_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "utility"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/utility_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/utility.ll
+    DEPENDS utility ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/vector.ll
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/vector/src
+            ${CMAKE_CURRENT_BINARY_DIR}/vector_ll
+            "-I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "vector"
+    COMMAND llvm-link-18 ${CMAKE_CURRENT_BINARY_DIR}/vector_ll/*.ll -o ${CMAKE_CURRENT_BINARY_DIR}/vector.ll
+    DEPENDS vector ${CMAKE_CURRENT_BINARY_DIR}/compile_to_ll.sh
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libliquid_main.ll
+    COMMAND clang-18 -S -emit-llvm -std=c99 -fPIC -O3 -Wno-deprecated -Wno-deprecated-declarations -fno-vectorize -fno-slp-vectorize -ffp-contract=off -DLIQUID_FFTOVERRIDE=0 -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include 
+            -c ${CMAKE_CURRENT_SOURCE_DIR}/src/libliquid.c
+            -o ${CMAKE_CURRENT_BINARY_DIR}/libliquid_main.ll
+    DEPENDS src/libliquid.c
+)
+
+# Link all module LLVM IR files into a single library LLVM IR file
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll
+    COMMAND llvm-link-18 
+            ${CMAKE_CURRENT_BINARY_DIR}/libliquid_main.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/agc.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/audio.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/buffer.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/channel.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/dotprod.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/equalization.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/fec.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/fft.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/filter.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/framing.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/math.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/matrix.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/modem.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/multichannel.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/nco.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/optim.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/quantization.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/random.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/sequence.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/utility.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/vector.ll
+            -o ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll
+    DEPENDS 
+            ${CMAKE_CURRENT_BINARY_DIR}/libliquid_main.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/agc.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/audio.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/buffer.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/channel.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/dotprod.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/equalization.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/fec.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/fft.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/filter.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/framing.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/math.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/matrix.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/modem.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/multichannel.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/nco.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/optim.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/quantization.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/random.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/sequence.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/utility.ll
+            ${CMAKE_CURRENT_BINARY_DIR}/vector.ll
+)
+
+# Create a custom target for the library LLVM IR file
+add_custom_target(${LIBNAME}_ll ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll)
 
 target_include_directories(${LIBNAME} PRIVATE ${INCLUDE})
 #target_sources(${LIBNAME} PUBLIC FILE_SET HEADERS FILES include/liquid.h)
@@ -639,6 +960,12 @@ set(AUTOTEST_EXTRA
     ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_rrrf_data_h13x256.c
     ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_crcf_data_h13x256.c
     ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_cccf_data_h13x256.c
+    ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_rrrf_data_h23x256.c
+    ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_crcf_data_h23x256.c
+    ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_cccf_data_h23x256.c
+    ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_rrrf_data_h23x256.c
+    ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_crcf_data_h23x256.c
+    ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_cccf_data_h23x256.c
     ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_rrrf_data_h23x256.c
     ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_crcf_data_h23x256.c
     ${PROJECT_SOURCE_DIR}/src/filter/tests/data/fftfilt_cccf_data_h23x256.c

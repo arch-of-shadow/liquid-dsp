@@ -201,7 +201,7 @@ foreach(example IN LISTS EXAMPLES)
     # Compile linked LLVM IR to binary
     add_custom_command(
         OUTPUT ${example}
-        COMMAND clang-18 ${example}_linked.ll -o ${example}
+        COMMAND clang-18 ${example}_linked.ll -o ${example} -lm
         DEPENDS ${example}_linked.ll
     )
 
