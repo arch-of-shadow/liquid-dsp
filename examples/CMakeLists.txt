@@ -177,13 +177,34 @@ set(EXAMPLES
     windowing_example
     )
 
+set(CMAKE_C_COMPILER clang-18)
+set(CMAKE_CXX_COMPILER clang++)
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -S -emit-llvm")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -S -emit-llvm")
+
 foreach(example IN LISTS EXAMPLES)
+    # Compile example to LLVM IR
+    add_custom_command(
+        OUTPUT ${example}.ll
+        COMMAND clang-18 -S -emit-llvm -I${CMAKE_CURRENT_BINARY_DIR}/.. -I${CMAKE_CURRENT_SOURCE_DIR}/../include ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c -o ${example}.ll
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c
+    )
 
-    add_executable(${example} ${example}.c)
-    target_include_directories(${example} PRIVATE ${INCLUDE})
-    target_link_libraries(${example} ${LIBNAME})
+    # Link example LLVM IR with library LLVM IR
+    add_custom_command(
+        OUTPUT ${example}_linked.ll
+        COMMAND llvm-link-18 ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.ll -o ${example}_linked.ll
+        DEPENDS ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.ll
+    )
 
-    # add example program as a test
-    #add_test(NAME ${example} COMMAND ${example})
+    # Compile linked LLVM IR to binary
+    add_custom_command(
+        OUTPUT ${example}
+        COMMAND clang-18 ${example}_linked.ll -o ${example}
+        DEPENDS ${example}_linked.ll
+    )
+
+    add_custom_target(${example}_target ALL DEPENDS ${example})
 endforeach()
 

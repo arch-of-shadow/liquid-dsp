@@ -12,9 +12,9 @@ project(liquid VERSION ${LIQUID_VERSION} LANGUAGES C CXX)
 # ---------------------------------------- options ----------------------------------------
 
 option(BUILD_EXAMPLES   "Set to ON to build examples"           ON)
-option(BUILD_AUTOTESTS  "Set to ON to build autotest program"   ON)
-option(BUILD_BENCHMARKS "Set to ON to build benchmark program"  ON)
-option(ENABLE_SIMD      "Set to ON to build SIMD extensions"    ON)
+option(BUILD_AUTOTESTS  "Set to ON to build autotest program"   OFF)
+option(BUILD_BENCHMARKS "Set to ON to build benchmark program"  OFF)
+option(ENABLE_SIMD      "Set to ON to build SIMD extensions"    OFF)
 option(BUILD_SANDBOX    "Set to ON to build sandbox programs"   OFF)
 option(BUILD_DOC        "Set to ON to build documentation"      OFF)
 option(COVERAGE         "Set to ON to build with code coverage" OFF)
@@ -52,7 +52,7 @@ if (MSVC)
     add_compile_options(/W4)
 else()
     # additional warnings
-    add_compile_options(-Wall -fPIC -O3 -Wno-deprecated -Wno-deprecated-declarations)
+    add_compile_options(-Wall -fPIC -O3 -Wno-deprecated -Wno-deprecated-declarations -fno-vectorize -fno-slp-vectorize -ffp-contract=off)
 endif()
 
 include (CheckTypeSize)
@@ -321,7 +321,13 @@ endif()
 # necessary to include this for the generated "config.h" header
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
-add_library(${LIBNAME} SHARED
+set(CMAKE_C_COMPILER clang-18)
+set(CMAKE_CXX_COMPILER clang++)
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -S -emit-llvm")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -S -emit-llvm")
+
+add_library(${LIBNAME} OBJECT
     src/libliquid.c
     $<TARGET_OBJECTS:agc>
     $<TARGET_OBJECTS:audio>
@@ -344,6 +350,17 @@ add_library(${LIBNAME} SHARED
     $<TARGET_OBJECTS:sequence>
     $<TARGET_OBJECTS:utility>
     $<TARGET_OBJECTS:vector>)
+
+# Generate the combined LLVM IR file for the library
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll
+    COMMAND clang-18 -S -emit-llvm -I${CMAKE_CURRENT_BINARY_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include 
+            -c ${CMAKE_CURRENT_SOURCE_DIR}/src/libliquid.c 
+            -o ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll
+    DEPENDS src/libliquid.c ${LIBNAME}
+)
+
+add_custom_target(${LIBNAME}_llvm ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${LIBNAME}.ll)
 
 target_include_directories(${LIBNAME} PRIVATE ${INCLUDE})
 #target_sources(${LIBNAME} PUBLIC FILE_SET HEADERS FILES include/liquid.h)
