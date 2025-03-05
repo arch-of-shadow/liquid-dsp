@@ -187,22 +187,22 @@ foreach(example IN LISTS EXAMPLES)
     # Compile example to LLVM IR
     add_custom_command(
         OUTPUT ${example}.ll
-        COMMAND clang-18 -S -emit-llvm -I${CMAKE_CURRENT_BINARY_DIR}/.. -I${CMAKE_CURRENT_SOURCE_DIR}/../include ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c -o ${example}.ll
+        COMMAND clang-18 -S -emit-llvm -Wno-deprecated -Wno-deprecated-declarations -I${CMAKE_CURRENT_BINARY_DIR}/.. -I${CMAKE_CURRENT_SOURCE_DIR}/../include ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c -o ${example}.ll
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c
     )
 
     # Link example LLVM IR with library LLVM IR
     add_custom_command(
-        OUTPUT ${example}_linked.ll
-        COMMAND llvm-link-18 ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.ll -o ${example}_linked.ll
-        DEPENDS ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.ll
+        OUTPUT ${example}_linked.bc
+        COMMAND llvm-link-18 --only-needed ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.bc -o ${example}_linked.bc
+        DEPENDS ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.bc
     )
 
     # Compile linked LLVM IR to binary
     add_custom_command(
         OUTPUT ${example}
-        COMMAND clang-18 ${example}_linked.ll -o ${example} -lm
-        DEPENDS ${example}_linked.ll
+        COMMAND clang-18 ${example}_linked.bc -o ${example} -lm -Wno-deprecated-declarations
+        DEPENDS ${example}_linked.bc
     )
 
     add_custom_target(${example}_target ALL DEPENDS ${example})
