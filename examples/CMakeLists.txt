@@ -183,28 +183,52 @@ set(CMAKE_CXX_COMPILER clang++)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -S -emit-llvm")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -S -emit-llvm")
 
+
 foreach(example IN LISTS EXAMPLES)
     # Compile example to LLVM IR
     add_custom_command(
         OUTPUT ${example}.ll
-        COMMAND clang-18 -S -emit-llvm -Wno-deprecated -Wno-deprecated-declarations -I${CMAKE_CURRENT_BINARY_DIR}/.. -I${CMAKE_CURRENT_SOURCE_DIR}/../include ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c -o ${example}.ll
+        COMMAND ${CLANG} -S -emit-llvm -Wno-deprecated -Wno-deprecated-declarations -I${CMAKE_CURRENT_BINARY_DIR}/.. -I${CMAKE_CURRENT_SOURCE_DIR}/../include ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c -o ${example}.ll
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${example}.c
     )
+    
+    # Instrument the LLVM IR
+    add_custom_command(
+        OUTPUT ${example}_instrumented.ll
+        COMMAND ${OPT} -load-pass-plugin="${PASS_PATH}" -passes=bb_instrument ${example}.ll -o ${example}_instrumented.ll
+        DEPENDS ${example}.ll
+    )
 
-    # Link example LLVM IR with library LLVM IR
+    # Link example LLVM IR with library LLVM IR (non-instrumented)
     add_custom_command(
         OUTPUT ${example}_linked.bc
-        COMMAND llvm-link-18 --only-needed ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.bc -o ${example}_linked.bc
+        COMMAND ${LLVM_LINK} --only-needed ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.bc -o ${example}_linked.bc
         DEPENDS ${example}.ll ${CMAKE_BINARY_DIR}/${LIBNAME}.bc
+    )
+    
+    # Link instrumented example with instrumented library
+    add_custom_command(
+        OUTPUT ${example}_instrumented_linked.bc
+        COMMAND ${LLVM_LINK} --only-needed ${example}_instrumented.ll ${CMAKE_BINARY_DIR}/${LIBNAME}_instrumented.bc -o ${example}_instrumented_linked.bc
+        DEPENDS ${example}_instrumented.ll ${CMAKE_BINARY_DIR}/${LIBNAME}_instrumented.bc
     )
 
     # Compile linked LLVM IR to binary
     add_custom_command(
         OUTPUT ${example}
-        COMMAND clang-18 ${example}_linked.bc -o ${example} -lm -Wno-deprecated-declarations
+        COMMAND ${CLANG} ${example}_linked.bc -o ${example} -lm -Wno-deprecated-declarations
         DEPENDS ${example}_linked.bc
     )
+    
+    # Compile instrumented linked LLVM IR to binary
+    add_custom_command(
+        OUTPUT ${example}_instrumented
+        COMMAND ${CLANG} ${example}_instrumented_linked.bc -o ${example}_instrumented -lm -Wno-deprecated-declarations
+        DEPENDS ${example}_instrumented_linked.bc
+    )
 
+    # Create targets for both normal and instrumented versions
     add_custom_target(${example}_target ALL DEPENDS ${example})
+    add_custom_target(${example}_instrumented_target ALL DEPENDS ${example}_instrumented)
 endforeach()
 
